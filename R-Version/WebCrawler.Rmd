@@ -1,0 +1,278 @@
+---
+title: "TextMining"
+author: "Zhijuan Deng"
+date: "2018-11-06"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+##1.get the information from Webdata Website
+### 1.1 Get Single web infoomation
+```{r}
+rm(list = ls())
+library(tidyverse)  
+# Parsing of HTML/XML files  
+library(rvest)    
+# String manipulation
+library(stringr)   
+# Verbose regular expressions
+library(rebus)   
+library(stringr)
+library(tidytext)
+library(dplyr)
+library("ggplot2")
+
+##Reading the HTML code of first page from the website
+
+url <-'http://Webdata'
+
+webpage <- read_html(url)
+#get url node
+joburl <- webpage %>% html_nodes('td')%>% html_nodes("a")%>% html_attrs() #%>%map(2) %>% unlist()
+#clean the url node and combine it with http title
+cleanUrl <- function(sjoburl){
+  aurl<- 'https://www.Webdata.com'
+  sjoburl<- paste(aurl,sjoburl[1],sep='')
+}
+joburl<- lapply(joburl, cleanUrl)
+
+#get company node and clean it
+company <- webpage %>%html_nodes('.company')%>% html_text()
+company <- gsub("\\r\\n","",company) %>% str_trim() %>% as.list()
+
+#get salary node and clean it
+salary <- webpage %>%html_nodes('.salary') %>% html_text()
+salary <- gsub("\\r\\n","",salary) %>% str_trim() %>% as.list()
+
+
+
+```
+
+###1.2 Get other pages information
+```{r}
+##get other pages information
+## deal with page data
+n <- 30
+url <- "https://www.Webdata.com/Job/california-data-scientist-jobs-SRCH_IL.0,10_IS2280_KO11,25_IP"
+list_of_pages <- str_c(url,2:n,'.htm')
+list_of_pages
+Urls <- list()
+Urls[[1]] <- joburl
+Company_Name <- list()
+Company_Name[[1]] <- company
+SalaryCI <- list()
+SalaryCI[[1]] <- salary
+get_Allpages <- function(list_of_pages){
+  for(i in 2:n ) {
+    web <- read_html(list_of_pages[i-1])
+    #get url node
+    Urls[[i]] <- web %>% html_nodes('td')%>% html_nodes("a")%>% html_attrs()
+    #clean the url node and combine it with http title
+    cleanUrl <- function(sjoburl){
+      aurl<- 'https://www.Webdata.com'
+      sjoburl<- paste(aurl,sjoburl[1],sep='')
+    }
+    Urls[[i]] <- lapply( Urls[[i]], cleanUrl)
+    
+    #get company node and clean it
+    Company_Name[[i]] <- web %>%html_nodes('.company')%>% html_text()
+    Company_Name[[i]] <- gsub("\\r\\n","",Company_Name[[i]]) %>% str_trim() %>% as.list()
+   
+    #get salary node and clean it
+    SalaryCI[[i]] <- web %>%html_nodes('.salary') %>% html_text()
+    SalaryCI[[i]] <- gsub("\\r\\n","", SalaryCI[[i]]) %>% str_trim() %>% as.list()
+  }
+  return(list(Urls,Company_Name,SalaryCI))
+  
+}
+C_U_S <- get_Allpages(list_of_pages);C_U_S
+#combine data and write it into tsv
+combine_Data <- function(listname,final_List){
+  for(i in 1:length(listname)){
+    final_List=c(final_List,listname[[i]])
+  }
+  return(final_List)
+}
+Urls <- combine_Data(C_U_S[[1]],list());
+Company_Name <- combine_Data(C_U_S[[2]],list());
+SalaryCI <-combine_Data(C_U_S[[3]],list());
+Webdata <- tibble( Company_Name= Company_Name, Url= Urls,SalaryCI=SalaryCI)
+
+#write_tsv(Webdata,path="E:\\rstation\\2018\\Webdata.tsv") 
+#getwd()
+#test <- cbind(as.character(Company_Name),as.character(Urls),as.character(SalaryCI))
+#test[,3]<-gsub("^0$",NA,test[,3])
+#write_delim(data.frame(test),delim="," ,path = "test1.txt")
+
+##get job description of every company
+get_jobDesc <- function(html){
+  web <- read_html(html)
+  jobDesc <- web%>% html_nodes('#JobDescriptionContainer .jobDesc')%>% html_text()%>%unlist() 
+  jobDesc
+}
+
+get_CUSD <- function(tvs_object){
+  jobDescs <- lapply(tvs_object, get_jobDesc)
+  CUSD <- mutate(Webdata,jobDescs)
+  CUSD
+  
+}
+CUSD<-get_CUSD(Webdata$Url)
+CUSD_back <- CUSD
+```
+
+##2.Tidy Data and Analysis
+### 2.1 Get mean salary and Job expriences requirement information
+```{r}
+###tidy CUSD
+#tidy salary and get mean salary for evey company
+CUSD$SalaryCI<-CUSD_back$SalaryCI
+CUSD$SalaryCI<-gsub("^$",0,CUSD$SalaryCI)
+#CUSD$SalaryCI<-gsub('\\$',"",CUSD$SalaryCI)
+get_Salary_mean <- function(sal_CI){
+  Sal_CI_down <- str_extract(sal_CI,pattern = "\\$.+k-")%>% str_extract(pattern = "[:digit:]+")%>%as.numeric()
+  Sal_CI_up <- str_extract(sal_CI,pattern = "-\\$.+k")%>% str_extract(pattern = "[:digit:]+")%>%as.numeric()
+  Sal_M <- mean(c(Sal_CI_down,Sal_CI_up))
+  Sal_M
+  
+}
+Salary_Mean<-lapply(CUSD$SalaryCI,get_Salary_mean)
+CUSD <- mutate(CUSD,Salary_Mean)
+
+#JobDesc parse
+#regex url:http://yphuang.github.io/blog/2016/03/15/regular-expression-and-strings-processing-in-R/
+## get year experience
+get_exp <- function(jobDesc){
+  exp_require <- str_extract(jobDesc,pattern = "[:digit:].year|[:digit:]..year|[:digit:]...year|[:digit:]....year")%>%str_extract(pattern = "[:digit:]+")
+  exp_require
+  # str_extract_all
+  }
+Exp_Require <- lapply(CUSD$jobDescs,get_exp)
+CUSD <- mutate(CUSD,Exp_Require)
+
+#segment job desc
+library(tidytext)
+library(dplyr)
+data(stop_words)
+C_D <- select(CUSD,Company_Name,jobDescs)
+
+#get single company jobsedc word 
+get_jobdesc_word <- function(Company_Name,jobDescs){
+  jobdesc_word<- data_frame(Company_Name,line = 1, text = jobDescs)%>% unnest_tokens(word,text) %>% anti_join(stop_words)
+  jobdesc_word
+}
+get_a_jobdesc_word <- function(CD){
+  for (i in 1:length(CD$Company_Name)){
+   A_job_Word[[i]] <- get_jobdesc_word(CD$Company_Name[[i]],CD$jobDescs[[i]])
+  }
+  A_job_Word
+}
+
+combine_Data2 <- function(listname,final_list){
+  for(i in 2:length(listname)){
+    listname[[i]]<- as.list(listname[[i]])
+    final_list$Company_Name=c(final_list$Company_Name,as.list(listname[[i]])$Company_Name)
+    final_list$word=c(final_list$word,listname[[i]]$word)
+    final_list$line=c(final_list$line,listname[[i]]$line)
+  }
+  return(final_list)
+}
+A_job_Word <- list()
+A_job_Word <- get_a_jobdesc_word(C_D)
+int_list <- as.list(A_job_Word[[1]])
+F_job_word <- combine_Data2(A_job_Word,int_list)
+#length(F_job_word$Company_Name)
+F_job_word <- as.tibble(list(Company_Name=F_job_word$Company_Name,line=F_job_word$line,word=F_job_word$word))
+F_job_word 
+
+
+```
+
+###2.2 Group Salary and Comparison
+```{r}
+#get grouped salary 
+C_S_E <- select(CUSD,Company_Name,Salary_Mean,Exp_Require)
+C_S_E$Company_Name <-unlist(C_S_E$Company_Name)
+C_S_E$Salary_Mean <-unlist(C_S_E$Salary_Mean)
+C_S_E$Exp_Require <-unlist(C_S_E$Exp_Require)%>%as.numeric()
+C_S_E <- C_S_E %>%filter(C_S_E$Salary_Mean>0)
+C_S_E
+class(C_S_E$Salary_Mean)
+
+Salary_Mean <- unlist(C_S_E$Salary_Mean)
+hist(C_S_E$Salary_Mean)
+#group low,median,high
+q<- quantile(Salary_Mean);q
+C_S_E$group<-rep(0,length(C_S_E$Company_Name))
+C_S_E_low <- C_S_E%>% filter(C_S_E$Salary_Mean <118.1)
+C_S_E_low$group=1
+C_S_E_low<-C_S_E_low%>% filter(C_S_E_low$Exp_Require>0 ,C_S_E_low$Exp_Require<10)
+
+C_S_E_median <- C_S_E%>% filter(C_S_E$Salary_Mean >118,C_S_E$Salary_Mean <164.1)
+C_S_E_median$group=2
+C_S_E_median <-C_S_E_median%>% filter(C_S_E_median$Exp_Require>0,C_S_E_median$Exp_Require<10)
+
+C_S_E_high <- C_S_E%>% filter(C_S_E$Salary_Mean >164)
+C_S_E_high$group=3
+C_S_E_high <-C_S_E_high %>% filter(C_S_E_high$Exp_Require >0,C_S_E_high$Exp_Require<10)
+
+boxplot(C_S_E_low$Exp_Require,C_S_E_median$Exp_Require,C_S_E_high$Exp_Require)
+mean(C_S_E_low$Exp_Require)
+mean(C_S_E_median$Exp_Require)
+mean(C_S_E_high$Exp_Require)
+
+```
+
+###2.3 
+```{r}
+
+#Word frequency--wordclouds
+library(wordcloud)
+
+F_job_word  %>% count(word) %>% with(wordcloud(word, n, max.words = 150))
+F_job_word <- F_job_word  %>% count(Company_Name,word, sort = TRUE)
+
+
+#tf-idf
+CSE<- list()
+CSE[[1]]<-as.list(C_S_E_low);CSE[[2]]<-as.list(C_S_E_median);CSE[[3]]<-as.list(C_S_E_high)
+Grouped_C_S_E <- CSE[[1]]
+Grouped_C_S_E$Company_Name=c(CSE[[1]]$Company_Name,CSE[[2]]$Company_Name,CSE[[3]]$Company_Name)
+Grouped_C_S_E$Salary_Mean=c(CSE[[1]]$Salary_Mean,CSE[[2]]$Salary_Mean,CSE[[3]]$Salary_Mean)
+Grouped_C_S_E$Exp_Require=c(CSE[[1]]$Exp_Require,CSE[[2]]$Exp_Require,CSE[[3]]$Exp_Require)
+Grouped_C_S_E$group=c(CSE[[1]]$group,CSE[[2]]$group,CSE[[3]]$group)
+C_S_E<-as.tibble(list(Company_Name=Grouped_C_S_E$Company_Name,Salary_Mean=Grouped_C_S_E$Salary_Mean,
+                      Exp_Require=Grouped_C_S_E$Exp_Require,group=Grouped_C_S_E$group)) %>% unique()
+#count(unique(C_S_E$Company_Name))
+S_E_job_words <- left_join(F_job_word,C_S_E)
+
+total_words <- S_E_job_words %>% 
+  group_by(group) %>% 
+  summarize(total = sum(n))
+S_E_job_words <- left_join(S_E_job_words , total_words)
+#S_E_job_words %>% filter(S_E_job_words$total>95009,S_E_job_words$total<94373)
+library(ggplot2)
+
+
+S_E_job_words <- S_E_job_words %>%
+  bind_tf_idf(word, group, n)
+
+
+S_E_job_words %>%
+  select(-total) %>%
+  arrange(desc(tf_idf))
+S_E_job_words
+
+S_E_job_words %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>% 
+  group_by(group) %>% 
+  top_n(15) %>% 
+  ungroup %>%
+  ggplot(aes(word, tf_idf, fill = group)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~group, ncol = 2, scales = "free") +
+  coord_flip()
+```
